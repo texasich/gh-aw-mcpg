@@ -696,3 +696,41 @@ func TestOverrideToPublicScope_GlobalPolicy_PreservesIntegrity(t *testing.T) {
 	assert.Equal(t, "public", cfg.GuardPolicy.AllowOnly.Repos)
 	assert.Equal(t, config.IntegrityApproved, cfg.GuardPolicy.AllowOnly.MinIntegrity)
 }
+
+// TestOverrideToPublicScope_AgentPolicies_OverridesToPublic verifies that per-agent
+// allow-only policies permitted on the target server are also overridden to repos="public".
+func TestOverrideToPublicScope_AgentPolicies_OverridesToPublic(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "test-owner/test-repo")
+
+	cfg := &config.Config{
+		Gateway: &config.GatewayConfig{
+			AgentIDs: []string{"agent-1", "agent-other"},
+			AgentPolicies: map[string]*config.AgentPolicy{
+				"agent-1": {
+					Servers:   []string{"github"},
+					AllowOnly: &config.AllowOnlyPolicy{Repos: "all", MinIntegrity: config.IntegrityApproved},
+				},
+				"agent-other": {
+					Servers:   []string{"fetch"},
+					AllowOnly: &config.AllowOnlyPolicy{Repos: []interface{}{"private-org/secret"}, MinIntegrity: config.IntegrityNone},
+				},
+			},
+		},
+		Servers: map[string]*config.ServerConfig{"github": {Type: "http"}},
+		GuardPolicy: &config.GuardPolicy{
+			WriteSink: &config.WriteSinkPolicy{Accept: []string{"*"}},
+		},
+	}
+	us := newMinimalUnifiedServerForGuardTest(cfg)
+
+	us.overrideToPublicScope("github")
+
+	policy, source, err := us.resolveGuardPolicyForAgent("agent-1", "github")
+	require.NoError(t, err)
+	assert.Equal(t, "agent", source)
+	require.NotNil(t, policy)
+	require.NotNil(t, policy.AllowOnly)
+	assert.Equal(t, "public", policy.AllowOnly.Repos)
+	assert.Equal(t, config.IntegrityApproved, policy.AllowOnly.MinIntegrity)
+	assert.Equal(t, []interface{}{"private-org/secret"}, cfg.Gateway.AgentPolicies["agent-other"].AllowOnly.Repos)
+}

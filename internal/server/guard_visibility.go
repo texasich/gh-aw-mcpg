@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/github/gh-aw-mcpg/internal/config"
@@ -187,6 +188,8 @@ func (us *UnifiedServer) overrideToPublicScope(serverID string) {
 	nwo := us.repoVisibilityCached.Repository
 	logGuardInit.Printf("overrideToPublicScope: applying public scope override for serverID=%s", serverID)
 
+	us.overrideAgentAllowOnlyPublicScope(serverID, nwo)
+
 	// Case 1: global policy override (set via CLI or env flags).
 	if us.cfg != nil && us.cfg.GuardPolicy != nil {
 		gp := us.cfg.GuardPolicy
@@ -278,4 +281,25 @@ func (us *UnifiedServer) overrideToPublicScope(serverID string) {
 	logger.LogWarnToServer(serverID, "difc",
 		"FORCED REPOS=PUBLIC: workflow repo %s is public — overriding allow-only scope to 'public' to prevent private data reads",
 		nwo)
+}
+
+func (us *UnifiedServer) overrideAgentAllowOnlyPublicScope(serverID, nwo string) {
+	if us.cfg == nil || us.cfg.Gateway == nil || !us.cfg.AgentPoliciesEnabled() {
+		return
+	}
+	agentIDs := make([]string, 0, len(us.cfg.Gateway.AgentPolicies))
+	for agentID := range us.cfg.Gateway.AgentPolicies {
+		agentIDs = append(agentIDs, agentID)
+	}
+	sort.Strings(agentIDs)
+	for _, agentID := range agentIDs {
+		agentPolicy := us.cfg.Gateway.AgentPolicies[agentID]
+		if agentPolicy == nil || agentPolicy.AllowOnly == nil || !agentPolicy.AllowsServer(serverID) {
+			continue
+		}
+		agentPolicy.AllowOnly.Repos = "public"
+		logger.LogWarnToServer(serverID, "difc",
+			"FORCED REPOS=PUBLIC: workflow repo %s is public -- overriding per-agent allow-only scope to 'public' to prevent private data reads (source: agent policy %q)",
+			nwo, agentID)
+	}
 }
